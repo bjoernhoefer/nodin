@@ -1,14 +1,10 @@
 /* Hugin - created by bjoernhoefer with much support of helmut stock
  * Hugin polls the state of the devices
-
 Version history:
 1.0 - Initial release
 1.1 - Octets are now multiplied by 8 so the represent bit/s
-
-
-
-
 */
+
 var snmp = require('snmp-native');
 var dns = require('dns');
 var net = require('net');
@@ -16,7 +12,7 @@ var fs = require('fs');
 var http = require("http");
 
 var client = new net.Socket();
-var influx = '1.2.3.4';
+var influx = '127.0.0.1';
 var influx_port = 2003;
 var query_interval = 1000 //ms
 var snmpsession = new snmp.Session({port: 161})
@@ -24,6 +20,8 @@ var snmpsession = new snmp.Session({port: 161})
 client.connect(influx_port, influx, function() {
         console.log('Influx connection detail: ' + influx + ':' + influx_port);
 });
+
+
 
 try{
     var hostlist = JSON.parse(fs.readFileSync('./snmp_poller.conf', 'utf8'));
@@ -33,10 +31,6 @@ try{
 }
 
 var prev_val = {};
-
-qinterfaces = [1, 2, 3, 15, 16, 17];
-
-var theoids = [];
 
 var alloids = {
 
@@ -62,91 +56,116 @@ var alloids = {
 
 }
 
+// Convert OID to OID Array
 function getoid(rawoid){
     return rawoid.split('.').filter(function (s) { return s.length > 0; }).map(function (s) { return parseInt(s, 10); });
 }
 
+// Convert OID Array to OID
 function revertoid(oid_data) {
     theoid = "." + oid_data.slice(0, -1).join('.')
     return (alloids["." + oid_data.slice(0, -1).join('.')])
 }
 
+// Convert float to integer
 function float2int (value) {
     return value | 0;
 }
 
-function query_snmp(host){
-    snmpsession.getAll({ oids: theoids, host: host.ip }, function (error, varbinds) {
+function build_snmp(host, host_details){
+        
+        // Count ports to fire up SNMP only when all ports are in theoids-arry (async workaround)
+        portcounter = 0;
+        
+        // Filter offline or scan-excluded ports to build port OIDs
+        theoids = [];
 
-        hostname = host.name.split('.').slice(0,1)+ "."
-        message = '';
-
-        // Calculate the difference between octets
-        varbinds.forEach(function (values){
-
-            // Type 65 = Counter32
-            // Type 2 = Integer
-
-            if (values.type == 65) {
-                if (revertoid(values.oid).search("octet") >= 0) {
-                    values.value = values.value * 8
+        Object.keys(host_details.Ports).forEach(function(Ports_key){
+                if (host_details.Ports[Ports_key].online){
+                        if (host_details.Ports[Ports_key].scan){
+                                Object.keys(alloids).forEach(function(oids_key){
+                                        theoids.push(getoid(oids_key + "." + Ports_key))
+                                        
+                                })
+                        }
                 }
-            }
+                portcounter++
+                if (Object.keys(host_details.Ports).length == portcounter){
 
-            // Workaround for 32bit counter limits
-            index = host.name + values.oid
-            try {
-                diff = values.value - prev_val[index]
-            } catch(error) {
-                diff = 0
-            }
-            prev_val[index] = values.value
-
-            //console.log()
-
-            if (diff >= 0) {
-                oid=revertoid(values.oid)
-
-                message += hostname + values.oid.slice(-1) +"." + revertoid(values.oid) + " " + diff + " " + float2int(values.sendStamp/1000) + "\n"
-            }
-
+                        // Fire up SNMP Poller for filtered ports
+                        query_snmp(host_details.IP, host, theoids)
+                }
         })
-
-        if (error == undefined) {
-            host.state = "gut";
-        }
-        else{
-            console.log("query_snmp - Error: " + error +" Host: " + host.ip);
-            host.state = "nix gut";
-        }
-
-        client.write(message);
+        
+}
 
 
+function query_snmp(host, hostname, theoids){
+        
+        snmpsession.getAll({ oids: theoids, host: host }, function (error, varbinds) {
+
+                message = '';
+                
+        
+        
+                // Calculate the difference between octets
+                varbinds.forEach(function (values){
+                        // What type of value do we get back?
+                        // Type 65 = Counter32
+                        // Type 2 = Integer
+        
+                        if (values.type == 65) {
+                                if (revertoid(values.oid).search("octet") >= 0) {
+                                        values.value = values.value * 8
+                                }
+                        }
+        
+                        // Workaround for 32bit counter limits
+                        index = hostname + values.oid
+                        try {
+                                diff = values.value - prev_val[index]
+                        } catch(error) {
+                                diff = 0
+                        }
+                        prev_val[index] = values.value
+                        
+                        if (diff >= 0) {
+                                oid=revertoid(values.oid)
+        
+                                message += hostname + "." + values.oid.slice(-1) +"." + revertoid(values.oid) + " " + diff + " " + float2int(values.sendStamp/1000) + "\n"
+                        }
+        
+                })
+        
+                if (error == undefined) {
+                        host.state = "good";
+                }
+                else{
+                    console.log("query_snmp - Error: " + error +" Host: " + host.ip);
+                    host.state = "bad";
+                }
+
+                client.write(message);
     })
 }
 
-function prestart(hostname, instancer){
-    hostlist.forEach(function (host, index){
-        if (!host.ip) {
-            dns.resolve4(host.name.trim(), function (err, addresses) {
-                if (err) throw err;
-                host.ip = addresses
-                console.log(host.ip)
-                setInterval(query_snmp, query_interval, host)
-            })
-        }
 
-    })
-
+function prestart(){
+        Object.keys(hostlist).forEach(function(host_key){
+                if (!hostlist[host_key].IP) {
+                        dns.resolve4(host_key.trim(), function (err, addresses) {
+                                if (err) throw err;
+                                hostlist[host_key].IP = addresses
+                                setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
+                        })
+                }
+                
+        })
 }
+
+
 
 function init(){
-    Object.keys(alloids).forEach(function(key){
-        qinterfaces.forEach(function(interface_num){
-            theoids.push(getoid(key + "." + interface_num))
-        })
-    })
     prestart()
 }
 
