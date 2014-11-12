@@ -93,16 +93,16 @@ function build_snmp(host, host_details){
                 if (Object.keys(host_details.Ports).length == portcounter){
 
                         // Fire up SNMP Poller for filtered ports
-                        query_snmp(host_details.IP, host, theoids)
+                        query_snmp(host_details.IP, host, host_details.Community, theoids)
                 }
         })
         
 }
 
 
-function query_snmp(host, hostname, theoids){
+function query_snmp(host, hostname, snmp_community, theoids){
         
-        snmpsession.getAll({ oids: theoids, host: host }, function (error, varbinds) {
+        snmpsession.getAll({ oids: theoids, host: host, community: snmp_community}, function (error, varbinds) {
 
                 message = '';
                 
