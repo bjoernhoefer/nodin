@@ -1,44 +1,63 @@
 /*
-Munin finds out details about switches...
+Munin finds out details about devices...
 
 */
 
-var dns = require('dns');
-var fs = require('fs');
-var ping = require('net-ping');
-var SNMP_CONFIG = './conf/snmp_poller.conf'
+var snmp = require('snmp-native');
+var snmpsession = new snmp.Session({port: 161})
 
-function readhosts(){
-    if (fs.existsSync(SNMP_CONFIG)){
-        try{
-            var hostlist = JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'));
-        } catch(error) {
-            console.log("munin");
-            console.log("config file failure!!!")
-            console.log(error)
-            process.exit(1);
+var ifindex = [1, 3, 6, 1, 2, 1, 2, 2, 1]
+
+// nodin
+nodin = require("./nodin.js")
+
+
+function gethostdetails(snmp_host, community, hostname){
+    snmpsession.getSubtree({ oid: ifindex, host: snmp_host, community: community}, function(error, snmp_answer){
+        if (error){
+            console.log("Error: "+ error)
         }
-        
-        Object.keys(JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'))).forEach(function(host_key){
-                    if (!hostlist[host_key].IP) {
-                            dns.resolve4(host_key.trim(), function (err, addresses) {
-                                    if (err) throw err;
-                                    hostlist[host_key].IP = addresses
-                                    //setInterval(build_snmp, hostlist[host_key].interval, host_key, hostlist[host_key])
-                                    console.log(host_key)
-                            })
-                    }
-                    
-            }) 
-    }
-    else{
-        console.log("munin");
-        console.log("Configfile not found!")
-    }
+        else{
+            snmp_answer.forEach(function (values){
+                
+                if (values.oid.slice(-2, -1) == 2){
+                    // Interface Name
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "name")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 3){
+                    // Interface Type
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "type")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 4){
+                    // Interface MTU
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "mtu")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 5){
+                    // Interface Speed
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "speed")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 7){
+                    // Interface Admin state
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "adminstate")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 8){
+                    // Interface Operational State
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "operational")
+                }
+                
+                else if (values.oid.slice(-2, -1) == 9){
+                    // Interface Last Chance
+                    nodin.save_data(hostname,"Ports", values.value, values.oid[values.oid.length-1], "lastchange")
+                }
+                
+            })
+        }
+    })
 }
 
-function testhosts(){
-    
-}
-
-readhosts();
+exports.gethostdetails = gethostdetails;
