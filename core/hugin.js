@@ -1,8 +1,5 @@
 /* Hugin - created by bjoernhoefer with much support of helmut stock
  * Hugin polls the state of the devices
-Version history:
-1.0 - Initial release
-1.1 - Octets are now multiplied by 8 so the represent bit/s
 */
 
 var snmp = require('snmp-native');
@@ -10,24 +7,27 @@ var dns = require('dns');
 var net = require('net');
 var fs = require('fs');
 var http = require("http");
-
-var client = new net.Socket();
-var influx = '127.0.0.1';
-var influx_port = 2003;
+var dgram = require("dgram");
+var client = dgram.createSocket("udp4");
+var influx_host = '1.2.3.4';
+var influx_port = 4444;
 var query_interval = 1000 //ms
 var snmpsession = new snmp.Session({port: 161})
-
-client.connect(influx_port, influx, function() {
-        console.log('Influx connection detail: ' + influx + ':' + influx_port);
-});
+var SNMP_CONFIG = './conf/snmp_poller.conf'
 
 
-
-try{
-    var hostlist = JSON.parse(fs.readFileSync('./snmp_poller.conf', 'utf8'));
-} catch(error) {
-    console.log("config file failure!!!")
-    process.exit(1);
+if (fs.existsSync(SNMP_CONFIG)){
+        try{
+            var hostlist = JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'));
+        } catch(error) {
+                console.log("hugin")
+                console.log("config file failure!!!")
+                console.log(error)
+                process.exit(1);
+        }
+}
+else{
+        console.log("Configfile not found!")
 }
 
 var prev_val = {};
@@ -72,15 +72,13 @@ function float2int (value) {
     return value | 0;
 }
 
-function build_snmp(host, host_details){
-        
-        // Count ports to fire up SNMP only when all ports are in theoids-arry (async workaround)
-        portcounter = 0;
-        
-        // Filter offline or scan-excluded ports to build port OIDs
-        theoids = [];
 
+
+function build_snmp(host, host_details){
+                
+        // Filter offline or scan-excluded ports to build port OIDs
         Object.keys(host_details.Ports).forEach(function(Ports_key){
+		theoids = [];
                 if (host_details.Ports[Ports_key].online){
                         if (host_details.Ports[Ports_key].scan){
                                 Object.keys(alloids).forEach(function(oids_key){
@@ -89,54 +87,57 @@ function build_snmp(host, host_details){
                                 })
                         }
                 }
-                portcounter++
-                if (Object.keys(host_details.Ports).length == portcounter){
+		// Fire up SNMP Poller for filtered ports
+		if (theoids.length > 0) {
+			query_snmp(host_details.IP, host, host_details.Community, theoids)
+		}
 
-                        // Fire up SNMP Poller for filtered ports
-                        query_snmp(host_details.IP, host, host_details.Community, theoids)
-                }
         })
         
 }
 
-
 function query_snmp(host, hostname, snmp_community, theoids){
-        
-        snmpsession.getAll({ oids: theoids, host: host, community: snmp_community}, function (error, varbinds) {
+
+        snmpsession.getAll({ oids: theoids, host: host, community: snmp_community }, function (error, varbinds) {
 
                 message = '';
-                
-        
-        
+
+                var INFLUX_OUT = [{name:"",
+                        columns:["time"],
+                        points:[[]]
+                        }];
+
+                ports = 0;
+
                 // Calculate the difference between octets
                 varbinds.forEach(function (values){
                         // What type of value do we get back?
                         // Type 65 = Counter32
                         // Type 2 = Integer
-        
+
                         if (values.type == 65) {
                                 if (revertoid(values.oid).search("octet") >= 0) {
                                         values.value = values.value * 8
                                 }
                         }
-        
+
                         // Workaround for 32bit counter limits
                         index = hostname + values.oid
                         try {
-                                diff = values.value - prev_val[index]
+                                delta_time = (values.receiveStamp - prev_val[index][1]) / 1000
+                                diff = Math.round((values.value - prev_val[index][0]) / delta_time)
                         } catch(error) {
                                 diff = 0
                         }
-                        prev_val[index] = values.value
-                        
+                        prev_val[index] = [values.value, values.receiveStamp]
+
+                        // If the difference is larger than 0 (Counter not exceeded, build up array)
                         if (diff >= 0) {
-                                oid=revertoid(values.oid)
-        
-                                message += hostname + "." + values.oid.slice(-1) +"." + revertoid(values.oid) + " " + diff + " " + float2int(values.sendStamp/1000) + "\n"
+                                INFLUX_OUT[0].name = hostname + '.port.' + values.oid.slice(-1)[0]
+                                INFLUX_OUT[0].columns.push(revertoid(values.oid));
+                                INFLUX_OUT[0].points[0].push(diff);
                         }
-        
                 })
-        
                 if (error == undefined) {
                         host.state = "good";
                 }
@@ -145,9 +146,19 @@ function query_snmp(host, hostname, snmp_community, theoids){
                     host.state = "bad";
                 }
 
-                client.write(message);
+                // Prevent some unusal things....
+                if (INFLUX_OUT[0].name != "") {
+                        INFLUX_OUT[0].points[0].unshift(float2int(varbinds[0].receiveStamp/1000))
+
+                        // Build and send the UDP message
+                        udp_message=new Buffer(JSON.stringify(INFLUX_OUT));
+                        client.send(udp_message, 0, udp_message.length, influx_port, influx_host, function(err, byte){
+                                if (err){console.error("\n\nUDP Error!!!!\n\n")}
+                        })
+                }
     })
 }
+
 
 
 function prestart(){
@@ -156,7 +167,16 @@ function prestart(){
                         dns.resolve4(host_key.trim(), function (err, addresses) {
                                 if (err) throw err;
                                 hostlist[host_key].IP = addresses
-                                setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
+				// console.log(hostlist[host_key].Community)
+                                
+				if (hostlist[host_key].interval) {
+					//console.log("interval given!" + hostlist[host_key].interval)
+					setInterval(build_snmp, hostlist[host_key].interval, host_key, hostlist[host_key])
+				}
+				else {
+					setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
+				}
+				// setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
                         })
                 }
                 
