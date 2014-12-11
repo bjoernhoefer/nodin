@@ -8,6 +8,7 @@ NodeJS SNMP Monitoring
 - Write SNMP Values to a Influx Database
 - Configuration and states are stored in REDIS
 - Discover device states automatically/periodically (munin)
+
 ###What should be possible in the future (aka ToDO): 
 - Web-Interface for Values and configuration (module will be caled nodin)
 
