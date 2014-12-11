@@ -9,9 +9,10 @@ NodeJS SNMP Monitoring
 - Configuration and states are stored in REDIS
 - Discover device states automatically/periodically (munin)
 ###What should be possible in the future (aka ToDO):
-- Web-Interface for Values and configuration (module will be caled nodin)
-## How to start nodin?
 
+- Web-Interface for Values and configuration (module will be caled nodin)
+- 
+## How to start nodin?
 1. Get the databases to store your data 
 1a REDIS (stores all properties of your devices) -> http://redis.io/ 
 1b INFLUXDB (stores all values of your devices) -> http://influxdb.com/
