@@ -1,7 +1,7 @@
 // nodin - controls his ravens :-)
 
 var munin = require("./munin.js")
-
+var hugin = require("./hugin.js")
 
 var redis = require('redis');
 var redis_server = "127.0.0.1";
@@ -31,8 +31,32 @@ if (fs.existsSync(SNMP_CONFIG)){
 }
 
 else{
-    console.log("nodin");
-    console.log("Configfile not found!")
+    console.log("Host definition file "+SNMP_CONFIG+" not found, trying REDIS only mode")
+    
+    redis_client.select(redis_database_number, function(){
+        redis_client.keys("*", function(err, redis_hosts){
+            if (err){
+                console.log("Redis also failed - aborting!")
+                redis_client.end()
+                exit(1);
+            }
+            else{
+                if (redis_hosts.length > 0){
+                    redis_hosts.forEach(function(redis_stored_hosts){
+                        check_redis_hosts(redis_stored_hosts)
+                    })
+                }
+                else{
+                    console.log("No hosts in REDIS found - aborting!")
+                    redis_client.end()
+                    exit(1)
+                }
+            }
+            
+        })
+    })
+        
+    
 }
 
 
@@ -43,7 +67,7 @@ function checkhosts(){
             redis_client.keys(host_key, function(err, replies){
                 if (err) console.log("nodin: checkhost error: "+err);
                 else{
-                    if (replies.length <= 0){
+                    if (replies.length == 0){
                         anerror = false;
                         // Host does not exist
                         if (hostlist[host_key].Community){
@@ -54,6 +78,7 @@ function checkhosts(){
                                 save_data(host_key, "IP", hostlist[host_key].IP)
                             }
                             else{
+                                // No IP address configured - lookup with DNS
                                 dns.resolve4(host_key.trim(), function (err, addresses) {
                                     if (err) {
                                         console.log("IP Address of " + host_key +  " was not found! Please check and restart!")
@@ -65,7 +90,9 @@ function checkhosts(){
                                     }
                                 })
                             }
+                            // Prevent further work if an error happens
                             if (anerror) console.log("nodin: Device lookup for " + host_key + " aborted.")
+                            
                             else {
                                 save_data(host_key, "community", hostlist[host_key].Community)
                                 // Check other values
@@ -73,11 +100,11 @@ function checkhosts(){
                                 if (hostlist[host_key].interval) save_data(host_key, "interval", hostlist[host_key].interval)
                                 else save_data(host_key, "interval", default_interval)
                                 // Device type
-                                if (hostlist[host_key].type) save_data(host_key, "interval", hostlist[host_key].type)
-                                else save_data(host_key, "interval", default_type)
-                                // model
-                                if (hostlist[host_key].model) save_data(host_key, "interval", hostlist[host_key].model)
-                                else save_data(host_key, "interval", default_model)
+                                if (hostlist[host_key].type) save_data(host_key, "type", hostlist[host_key].type)
+                                else save_data(host_key, "type", default_type)
+                                // Device model
+                                if (hostlist[host_key].model) save_data(host_key, "model", hostlist[host_key].model)
+                                else save_data(host_key, "model", default_model)
                             }
                         }
                         else{
@@ -85,57 +112,96 @@ function checkhosts(){
                         }
                     }
                     else{
-                    // Device alread in REDIS
-                        redis_client.hget(host_key, "IP", function(err, redis_ip_address){
-                            if (err) console.log ("nodin: get device details for " + host_key + "failed: "+err)
-                            else{
-                                redis_client.hget(host_key, "community", function(err, redis_community){
-                                    if (err) console.log ("nodin: get device details for " + host_key + "failed: "+err)
-                                    else{
-                                        munin.gethostdetails(redis_ip_address, redis_community, host_key)
-                                    }
-                                })
-                            }
-                        })
-                        
+                        // Device alread in REDIS
+                        check_redis_hosts(host_key)
                     }
                 }
             })
         })
     })
+    start_ravens();
 }
 
+function check_redis_hosts(redis_host_name){
+    redis_client.select(redis_database_number, function(){
+        redis_client.hget(redis_host_name, "IP", function(err, redis_ip_address){
+            if (err) console.log ("nodin: get device details for " + redis_host_name + "failed: "+err)
+            else{
+                redis_client.hget(redis_host_name, "community", function(err, redis_community){
+                    if (err) console.log ("nodin: get device details for " + redis_host_name + "failed: "+err)
+                    else{
+                        munin.gethostdetails(redis_ip_address, redis_community, redis_host_name)
+                    }
+                })
+            }
+        })
+    })
+}
 
-function save_data(device, key, value, portnum, portkey, methode){
+function start_ravens(){
+    // Start hugin
+    redis_client.select(redis_database_number, function(){
+        redis_client.keys("*", function(err, hosts){
+            if (err) console.log("hugin start failed: "+err)
+            else{
+                Object.keys(hosts).forEach(function(host_num){
+                    redis_client.HGETALL(hosts[host_num], function(err, hostdetails){
+                        if (err) console.log("hugin start failed: "+err)
+                        else{
+                            setInterval(hugin.snmpquery, hostdetails.interval, hosts[host_num], hostdetails)
+                            setInterval(munin.gethostdetails, hostdetails.interval*500, hostdetails.IP, hostdetails.community, hosts[host_num])
+                        }
+                    })
+                })
+            }
+            
+        })
+    })
+}
+
+function save_data(device, key, value, methode){
     redis_client.select(redis_database_number, function(){  
-        if (key != "Ports"){
-            redis_client.hset(device, key, value)
+        
+        if (methode == "ports"){
+            
+            redis_client.hset(device, key, JSON.stringify(value));
         }
         else{
-            redis_client.hmset(device, key+"_"+portnum+"_"+portkey, value)
+            redis_client.hset(device, key, value)
         }
+        
     })
 }
 
 function get_data(methode, key, portnum, portkey){
     if (methode == "devices"){
+        //console.log("devices")
         redis_client.select(redis_database_number, function(){
             redis_client.keys("*", function(err, replies){
-                if (err) console.log(err)
+                if (err) {
+                    console.log("Nodin - get devices: "+err);
+                    return null;
+                }
                 else{
-                    console.log("Reply: " + replies)
+                    return replies
                 }
             })
         })
     }
-    if (key != "Ports"){
-        
+    else if(methode == "ports"){
+        console.log("ports")
+        redis_client.select(redis_database_number, function(){
+            redis_client.hget(key, "ports", function(err, replies){
+                if (err) {
+                    console.log("Nodin - get ports: "+err)
+                    return null
+                }
+                else{
+                    return JSON.parse(replies)
+                }
+            })
+        })
     }
-    else{
-        
-    }
-    
-    
 }
 
 redis_client.on("error", function (err) {

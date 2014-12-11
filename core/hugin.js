@@ -1,34 +1,19 @@
-/* Hugin - created by bjoernhoefer with much support of helmut stock
- * Hugin polls the state of the devices
+/*
+Hugin - created by bjoernhoefer with much support of helmut stock
+Hugin polls the state of the devices
+
 */
 
 var snmp = require('snmp-native');
-var dns = require('dns');
-var net = require('net');
-var fs = require('fs');
 var http = require("http");
 var dgram = require("dgram");
 var client = dgram.createSocket("udp4");
 var influx_host = '1.2.3.4';
 var influx_port = 4444;
-var query_interval = 1000 //ms
 var snmpsession = new snmp.Session({port: 161})
-var SNMP_CONFIG = './conf/snmp_poller.conf'
 
 
-if (fs.existsSync(SNMP_CONFIG)){
-        try{
-            var hostlist = JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'));
-        } catch(error) {
-                console.log("hugin")
-                console.log("config file failure!!!")
-                console.log(error)
-                process.exit(1);
-        }
-}
-else{
-        console.log("Configfile not found!")
-}
+var nodin = require("./nodin.js")
 
 var prev_val = {};
 
@@ -72,55 +57,47 @@ function float2int (value) {
     return value | 0;
 }
 
-
-
-function build_snmp(host, host_details){
-                
-        // Filter offline or scan-excluded ports to build port OIDs
-        Object.keys(host_details.Ports).forEach(function(Ports_key){
-		theoids = [];
-                if (host_details.Ports[Ports_key].online){
-                        if (host_details.Ports[Ports_key].scan){
+// Prepare OID Array to send it to query_snmp
+function snmp_prepare(host, hostdetails){
+        Object.keys(JSON.parse(hostdetails.ports)).forEach(function(port_detail_num){
+                var theoids = [];
+                if (hostdetails.ports[port_detail_num].operational != 2){
+                        if (hostdetails.ports[port_detail_num].adminstate != 2){
                                 Object.keys(alloids).forEach(function(oids_key){
-                                        theoids.push(getoid(oids_key + "." + Ports_key))
-                                        
+                                        theoids.push(getoid(oids_key + "." + port_detail_num))
                                 })
                         }
                 }
-		// Fire up SNMP Poller for filtered ports
-		if (theoids.length > 0) {
-			query_snmp(host_details.IP, host, host_details.Community, theoids)
-		}
-
+                // Query SNMP for every port (easier to handle in query_snmp)
+                query_snmp(theoids, host, hostdetails)
         })
         
 }
 
-function query_snmp(host, hostname, snmp_community, theoids){
-
-        snmpsession.getAll({ oids: theoids, host: host, community: snmp_community }, function (error, varbinds) {
+function query_snmp(theoids, hostname, hostdetails){
+        
+        // Start SNMP Session at host
+        snmpsession.getAll({ oids: theoids, host: hostdetails.IP, community: hostdetails.community }, function (error, varbinds) {
 
                 message = '';
-
                 var INFLUX_OUT = [{name:"",
                         columns:["time"],
                         points:[[]]
                         }];
-
                 ports = 0;
-
+                
                 // Calculate the difference between octets
                 varbinds.forEach(function (values){
                         // What type of value do we get back?
                         // Type 65 = Counter32
                         // Type 2 = Integer
-
+                        
                         if (values.type == 65) {
                                 if (revertoid(values.oid).search("octet") >= 0) {
                                         values.value = values.value * 8
                                 }
                         }
-
+                        
                         // Workaround for 32bit counter limits
                         index = hostname + values.oid
                         try {
@@ -130,26 +107,22 @@ function query_snmp(host, hostname, snmp_community, theoids){
                                 diff = 0
                         }
                         prev_val[index] = [values.value, values.receiveStamp]
-
-                        // If the difference is larger than 0 (Counter not exceeded, build up array)
+                        
+                        // If the difference is larger than 0 (Counter not exceeded, build up array) - otherwise dump the package
                         if (diff >= 0) {
-                                INFLUX_OUT[0].name = hostname + '.port.' + values.oid.slice(-1)[0]
+                                INFLUX_OUT[0].name = hostname + "." + JSON.parse(hostdetails.ports)[values.oid.slice(-1)[0]].name
                                 INFLUX_OUT[0].columns.push(revertoid(values.oid));
                                 INFLUX_OUT[0].points[0].push(diff);
                         }
                 })
-                if (error == undefined) {
-                        host.state = "good";
+                if (error != undefined) {
+                        console.log("query_snmp - Error: " + error +" Host: " + host.ip);
                 }
-                else{
-                    console.log("query_snmp - Error: " + error +" Host: " + host.ip);
-                    host.state = "bad";
-                }
-
+                
                 // Prevent some unusal things....
                 if (INFLUX_OUT[0].name != "") {
                         INFLUX_OUT[0].points[0].unshift(float2int(varbinds[0].receiveStamp/1000))
-
+                        
                         // Build and send the UDP message
                         udp_message=new Buffer(JSON.stringify(INFLUX_OUT));
                         client.send(udp_message, 0, udp_message.length, influx_port, influx_host, function(err, byte){
@@ -159,46 +132,4 @@ function query_snmp(host, hostname, snmp_community, theoids){
     })
 }
 
-
-
-function prestart(){
-        Object.keys(hostlist).forEach(function(host_key){
-                if (!hostlist[host_key].IP) {
-                        dns.resolve4(host_key.trim(), function (err, addresses) {
-                                if (err) throw err;
-                                hostlist[host_key].IP = addresses
-				// console.log(hostlist[host_key].Community)
-                                
-				if (hostlist[host_key].interval) {
-					//console.log("interval given!" + hostlist[host_key].interval)
-					setInterval(build_snmp, hostlist[host_key].interval, host_key, hostlist[host_key])
-				}
-				else {
-					setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
-				}
-				// setInterval(build_snmp, query_interval, host_key, hostlist[host_key])
-                        })
-                }
-                
-        })
-}
-
-
-
-function init(){
-    prestart()
-}
-
-function http_server(){
-    http.createServer(function(request, response) {
-    response.writeHead(200, {"Content-Type": "text/plain"});
-    hostlist.forEach(function (host){
-        response.write("Host: " + host.ip + " - Status: " + host.state + "\n")
-    })
-
-    response.end();
-    }).listen(8888);
-}
-
-init();
-http_server();
+exports.snmpquery = snmp_prepare
