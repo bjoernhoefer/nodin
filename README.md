@@ -14,8 +14,8 @@ NodeJS SNMP Monitoring
 
 ## How to start nodin?
 1. Get the databases to store your data 
-  1 REDIS (stores all properties of your devices) -> http://redis.io/ 
-  2 INFLUXDB (stores all values of your devices) -> http://influxdb.com/
+⋅⋅* REDIS (stores all properties of your devices) -> http://redis.io/ 
+⋅⋅* INFLUXDB (stores all values of your devices) -> http://influxdb.com/
 2. Install the databases
 3. Get and install the current version of nodeJS -> http://nodejs.org/
 4. Install all necessary modules for nodin
