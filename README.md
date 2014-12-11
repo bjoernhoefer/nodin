@@ -30,4 +30,5 @@ To view your data you might also get grafana -> http://grafana.org/
 
 ###Where does the name come from?
 Odin should be know, by the most people - otherwise: http://en.wikipedia.org/wiki/Odin 
+
 Odins two birds were called hugin and munin they provided him information about the things going on around him - both names were already taken by other projects so I decided to use the a mixture of the programming language and the "master" of hugin and munin -> NodeJS + Odin = nodin
