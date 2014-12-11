@@ -24,8 +24,7 @@ NodeJS SNMP Monitoring
   * snmp-native (for hugin) -> https://github.com/calmh/node-snmp-native
 5. Go to the directory where you cloned this repo (e.g. /opt/node/nodin (for linux)) and start nodin (node core/nodin.js)
 
-(Optional)
-To view your data you might also get grafana -> http://grafana.org/
+* (Optional) To view your data you might also get grafana -> http://grafana.org/
 
 ###Where does the name come from?
 Odin should be know, by the most people - otherwise: http://en.wikipedia.org/wiki/Odin 
