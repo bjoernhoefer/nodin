@@ -3,7 +3,7 @@ nodin
 
 NodeJS SNMP Monitoring
 
-###What can currently be done:
+###Current features:
 - Monitor different devices/ports of devices via SNMP (hugin)
 - Discover device states automatically/periodically (munin)
 - Write SNMP Values to a Influx Database
