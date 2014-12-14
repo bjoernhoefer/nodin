@@ -1,0 +1,18 @@
+{
+    "influxdb" : {
+        "host" : "127.0.0.1",
+        "port" : 4444
+        },
+    "redis" : {
+        "host" : "127.0.0.1",
+        "port" : 6379,
+        "device_db" : 2,
+        "system_db" : 3
+    },
+    "defaults" : {
+        "snmp_community" : "public",
+        "interval" : 1000,
+        "type" : "switch",
+        "model" : "procurve"
+    }
+}

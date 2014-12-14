@@ -1,29 +1,47 @@
 // nodin - controls his ravens :-)
 
-var munin = require("./munin.js")
-var hugin = require("./hugin.js")
-
-var redis = require('redis');
-var redis_server = "127.0.0.1";
-var redis_port = 6379;
-var redis_database_number = 2;
-var redis_client = redis.createClient(redis_port, redis_server);
-
-
-// Read configuration files
-var dns = require('dns');
+// Read nodin configuration file
 var fs = require('fs');
-var SNMP_CONFIG = './conf/snmp_poller.conf'
-// Default values, if not existent
-default_interval = 1000;
-default_type = "switch";
-default_model = "procurve";
-
-if (fs.existsSync(SNMP_CONFIG)){
+var NODIN_CONFIG = './conf/nodin.conf'
+if (fs.existsSync(NODIN_CONFIG)){
     try{
-        var hostlist = JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'));
+        var configuration = JSON.parse(fs.readFileSync(NODIN_CONFIG, 'utf8'));
+        exports.configuration = configuration;
     } catch(error) {
         console.log("config file failure!!!")
+        console.log(error)
+        process.exit(1);
+    }
+}
+
+// Read SNMP configuration file
+var SNMP_CONFIG = './conf/snmp.conf'
+if (fs.existsSync(SNMP_CONFIG)){
+    try{
+        var snmp_config = JSON.parse(fs.readFileSync(SNMP_CONFIG, 'utf8'));
+        exports.snmp_configuration = snmp_config
+    } catch(error) {
+        console.log("SNMP config file failure!!!")
+        console.log(error)
+        process.exit(1);
+    }
+    ;
+}
+
+// Load all needed modules
+var munin = require("./munin.js")
+var hugin = require("./hugin.js")
+var dns = require('dns');
+var redis = require('redis');
+var redis_client = redis.createClient(configuration.redis.port, configuration.redis.host);
+
+// Read device configuration file
+var DEVICE_CONFIG = './conf/devices.conf'
+if (fs.existsSync(DEVICE_CONFIG)){
+    try{
+        var hostlist = JSON.parse(fs.readFileSync(DEVICE_CONFIG, 'utf8'));
+    } catch(error) {
+        console.log("Device config file failure!!!")
         console.log(error)
         process.exit(1);
     }
@@ -31,9 +49,9 @@ if (fs.existsSync(SNMP_CONFIG)){
 }
 
 else{
-    console.log("Host definition file "+SNMP_CONFIG+" not found, trying REDIS only mode")
+    console.log("Host definition file "+DEVICE_CONFIG+" not found, trying REDIS only mode")
     
-    redis_client.select(redis_database_number, function(){
+    redis_client.select(configuration.redis.device_db, function(){
         redis_client.keys("*", function(err, redis_hosts){
             if (err){
                 console.log("Redis also failed - aborting!")
@@ -59,61 +77,21 @@ else{
     
 }
 
-
+// Check details of device
 function checkhosts(){
 // Check if host is already stored in REDIS
-    Object.keys(hostlist).forEach(function(host_key){
-        redis_client.select(redis_database_number, function(){
-            redis_client.keys(host_key, function(err, replies){
+    Object.keys(hostlist).forEach(function(file_host_name){
+        redis_client.select(configuration.redis.device_db, function(){
+            redis_client.keys(file_host_name, function(err, replies){
                 if (err) console.log("nodin: checkhost error: "+err);
                 else{
                     if (replies.length == 0){
-                        anerror = false;
-                        // Host does not exist
-                        if (hostlist[host_key].Community){
-                            // If the host has an community
-                            if (hostlist[host_key].IP){
-                                // If there is an IP address in the config fire up munin to get all details of the device
-                                munin.gethostdetails(hostlist[host_key].IP, hostlist[host_key].Community, host_key)
-                                save_data(host_key, "IP", hostlist[host_key].IP)
-                            }
-                            else{
-                                // No IP address configured - lookup with DNS
-                                dns.resolve4(host_key.trim(), function (err, addresses) {
-                                    if (err) {
-                                        console.log("IP Address of " + host_key +  " was not found! Please check and restart!")
-                                        anerror = true;
-                                    }
-                                    else{
-                                        munin.gethostdetails(addresses, hostlist[host_key].Community, host_key)
-                                        save_data(host_key, "IP", addresses)
-                                    }
-                                })
-                            }
-                            // Prevent further work if an error happens
-                            if (anerror) console.log("nodin: Device lookup for " + host_key + " aborted.")
-                            
-                            else {
-                                save_data(host_key, "community", hostlist[host_key].Community)
-                                // Check other values
-                                // Check interval
-                                if (hostlist[host_key].interval) save_data(host_key, "interval", hostlist[host_key].interval)
-                                else save_data(host_key, "interval", default_interval)
-                                // Device type
-                                if (hostlist[host_key].type) save_data(host_key, "type", hostlist[host_key].type)
-                                else save_data(host_key, "type", default_type)
-                                // Device model
-                                if (hostlist[host_key].model) save_data(host_key, "model", hostlist[host_key].model)
-                                else save_data(host_key, "model", default_model)
-                            }
-                        }
-                        else{
-                            console.log(host_key + " has no community set! Please check and restart!")
-                        }
+                        // Use values provided by config-file
+                        check_file_hosts(file_host_name)
                     }
                     else{
                         // Device alread in REDIS
-                        check_redis_hosts(host_key)
+                        check_redis_hosts(file_host_name)
                     }
                 }
             })
@@ -122,15 +100,81 @@ function checkhosts(){
     start_ravens();
 }
 
-function check_redis_hosts(redis_host_name){
-    redis_client.select(redis_database_number, function(){
-        redis_client.hget(redis_host_name, "IP", function(err, redis_ip_address){
-            if (err) console.log ("nodin: get device details for " + redis_host_name + "failed: "+err)
+function check_file_hosts(file_host_name){
+    anerror = false;
+    // Host does not exist
+    if (hostlist[file_host_name].IP){
+        // If there is an IP address check if there is an community set and save IP
+        save_data(file_host_name, "IP", hostlist[file_host_name].IP)
+        if (hostlist[file_host_name].Community){
+            // Community found - Fire up munin
+            munin.gethostdetails(hostlist[file_host_name].IP, hostlist[file_host_name].Community, file_host_name)
+            save_data(file_host_name, "community", hostlist[file_host_name].Community)
+        }
+        else{
+            // Inform user about missing value, save value and fire up munin
+            console.log("No SNMP community found in configfile - using default!")
+            munin.gethostdetails(hostlist[file_host_name].IP, configuration.defaults.snmp_community, file_host_name)
+            save_data(file_host_name, "community", configuration.defaults.snmp_community)
+        }
+        
+    }
+    else{
+        // No IP address configured - lookup with DNS
+        dns.resolve4(file_host_name.trim(), function (err, addresses) {
+            if (err) {
+                console.log("IP Address of " + file_host_name +  " was not found! Please check and restart!")
+                anerror = true;
+            }
             else{
-                redis_client.hget(redis_host_name, "community", function(err, redis_community){
-                    if (err) console.log ("nodin: get device details for " + redis_host_name + "failed: "+err)
+                if (hostlist[file_host_name].Community){
+                    // Community found - Fire up munin 
+                    munin.gethostdetails(addresses, hostlist[file_host_name].Community, file_host_name)
+                    save_data(file_host_name, "community", hostlist[file_host_name].Community)
+                    save_data(file_host_name, "IP", addresses)
+                }
+                else{
+                    // Inform user about missing value, save value and fire up munin
+                    console.log("No SNMP community found in configfile - using default!")
+                    munin.gethostdetails(addresses, configuration.defaults.snmp_community, file_host_name)
+                    save_data(file_host_name, "community", configuration.defaults.snmp_community)
+                    save_data(file_host_name, "IP", addresses)
+                }
+            }
+        })
+    }
+    // Prevent further work if an error happens
+    if (anerror) console.log("nodin: Device lookup for " + file_host_name + " aborted.")
+    
+    else {
+        // Check other values - if not present use default values
+        // Check interval
+        if (hostlist[file_host_name].interval) save_data(file_host_name, "interval", hostlist[file_host_name].interval)
+        else save_data(file_host_name, "interval", configuration.defaults.interval)
+        // Device type
+        if (hostlist[file_host_name].type) save_data(file_host_name, "type", hostlist[file_host_name].type)
+        else save_data(file_host_name, "type", configuration.defaults.type)
+        // Device model
+        if (hostlist[file_host_name].model) save_data(file_host_name, "model", hostlist[file_host_name].model)
+        else save_data(file_host_name, "model", configuration.defaults.model)
+    }
+}
+
+function check_redis_hosts(redis_host_name){
+    redis_client.select(configuration.redis.device_db, function(){
+        redis_client.HGETALL(redis_host_name, function(err, check_hostdetails){
+            if (err){
+                console.log ("nodin: get device details for " + redis_host_name + "failed: "+err)
+                console.log("Trying file-based lookup")
+                check_file_hosts(redis_host_name)
+            }
+            else{
+                check_consistence(redis_host_name, check_hostdetails, function(consistence_result){
+                    if (consistence_result == "inconsistent"){
+                        check_file_hosts(redis_host_name)
+                    }
                     else{
-                        munin.gethostdetails(redis_ip_address, redis_community, redis_host_name)
+                        munin.gethostdetails(check_hostdetails.IP, check_hostdetails.community, redis_host_name)
                     }
                 })
             }
@@ -138,9 +182,21 @@ function check_redis_hosts(redis_host_name){
     })
 }
 
+// Check if SNMP consistent (configuration-file == REDIS Databse)
+function check_consistence(consistence_host, consistence_host_details, callback){
+    if (consistence_host_details.community == hostlist[consistence_host].Community){
+        callback("consistent")
+    }
+    else{
+        callback("inconsistent")
+    }
+    
+}
+
+
 function start_ravens(){
     // Start hugin
-    redis_client.select(redis_database_number, function(){
+    redis_client.select(configuration.redis.device_db, function(){
         redis_client.keys("*", function(err, hosts){
             if (err) console.log("hugin start failed: "+err)
             else{
@@ -160,7 +216,7 @@ function start_ravens(){
 }
 
 function save_data(device, key, value, methode){
-    redis_client.select(redis_database_number, function(){  
+    redis_client.select(configuration.redis.device_db, function(){  
         
         if (methode == "ports"){
             
@@ -173,41 +229,9 @@ function save_data(device, key, value, methode){
     })
 }
 
-function get_data(methode, key, portnum, portkey){
-    if (methode == "devices"){
-        //console.log("devices")
-        redis_client.select(redis_database_number, function(){
-            redis_client.keys("*", function(err, replies){
-                if (err) {
-                    console.log("Nodin - get devices: "+err);
-                    return null;
-                }
-                else{
-                    return replies
-                }
-            })
-        })
-    }
-    else if(methode == "ports"){
-        console.log("ports")
-        redis_client.select(redis_database_number, function(){
-            redis_client.hget(key, "ports", function(err, replies){
-                if (err) {
-                    console.log("Nodin - get ports: "+err)
-                    return null
-                }
-                else{
-                    return JSON.parse(replies)
-                }
-            })
-        })
-    }
-}
-
 redis_client.on("error", function (err) {
     console.log("REDIS Error: " + err);
 });
 
 
-exports.get_data = get_data;
 exports.save_data = save_data;

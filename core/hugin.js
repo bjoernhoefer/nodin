@@ -1,45 +1,17 @@
 /*
 Hugin - created by bjoernhoefer with much support of helmut stock
 Hugin polls the state of the devices
-
 */
 
 var snmp = require('snmp-native');
 var http = require("http");
 var dgram = require("dgram");
 var client = dgram.createSocket("udp4");
-var influx_host = '1.2.3.4';
-var influx_port = 4444;
+// nodin
+var nodin = require("./nodin.js")
 var snmpsession = new snmp.Session({port: 161})
 
-
-var nodin = require("./nodin.js")
-
 var prev_val = {};
-
-var alloids = {
-
-    // Octets
-    '.1.3.6.1.2.1.2.2.1.10' : "inoctet",
-    '.1.3.6.1.2.1.2.2.1.16' : "outoctet",
-
-    //discards
-    '.1.3.6.1.2.1.2.2.1.13' : "indiscards",
-    '.1.3.6.1.2.1.2.2.1.19' : "outdiscards",
-
-    // errors
-    '.1.3.6.1.2.1.2.2.1.14' : "inerrors",
-    '.1.3.6.1.2.1.2.2.1.20' : "outerrors",
-
-    //unicast packets
-    '.1.3.6.1.2.1.2.2.1.11' : "inucast",
-    '.1.3.6.1.2.1.2.2.1.17' : "outucast",
-
-    // non unicast packets
-    '.1.3.6.1.2.1.2.2.1.12' : "innucast",
-    '.1.3.6.1.2.1.2.2.1.18' :  "outnucast"
-
-}
 
 // Convert OID to OID Array
 function getoid(rawoid){
@@ -49,7 +21,7 @@ function getoid(rawoid){
 // Convert OID Array to OID
 function revertoid(oid_data) {
     theoid = "." + oid_data.slice(0, -1).join('.')
-    return (alloids["." + oid_data.slice(0, -1).join('.')])
+    return (nodin.snmp_configuration.hugin.alloids["." + oid_data.slice(0, -1).join('.')])
 }
 
 // Convert float to integer
@@ -63,7 +35,7 @@ function snmp_prepare(host, hostdetails){
                 var theoids = [];
                 if (hostdetails.ports[port_detail_num].operational != 2){
                         if (hostdetails.ports[port_detail_num].adminstate != 2){
-                                Object.keys(alloids).forEach(function(oids_key){
+                                Object.keys(nodin.snmp_configuration.hugin.alloids).forEach(function(oids_key){
                                         theoids.push(getoid(oids_key + "." + port_detail_num))
                                 })
                         }
@@ -125,7 +97,7 @@ function query_snmp(theoids, hostname, hostdetails){
                         
                         // Build and send the UDP message
                         udp_message=new Buffer(JSON.stringify(INFLUX_OUT));
-                        client.send(udp_message, 0, udp_message.length, influx_port, influx_host, function(err, byte){
+                        client.send(udp_message, 0, udp_message.length, nodin.configuration.influxdb.port, nodin.configuration.influxdb.host, function(err, byte){
                                 if (err){console.error("\n\nUDP Error!!!!\n\n")}
                         })
                 }

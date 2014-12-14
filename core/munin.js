@@ -6,16 +6,14 @@ Munin finds out details about devices...
 var snmp = require('snmp-native');
 var snmpsession = new snmp.Session({port: 161})
 
-var ifindex = [1, 3, 6, 1, 2, 1, 2, 2, 1]
 
 // nodin
 var nodin = require("./nodin.js")
 
-
 function gethostdetails(snmp_host, community, hostname){
     switch_data = {}
     
-    snmpsession.getSubtree({ oid: ifindex, host: snmp_host, community: community}, function(error, snmp_answer){
+    snmpsession.getSubtree({ oid: [1, 3, 6, 1, 2, 1, 2, 2, 1], host: snmp_host, community: community}, function(error, snmp_answer){
         if (error){
             console.log("Munin Get Subtree Error: "+ error)
         }
