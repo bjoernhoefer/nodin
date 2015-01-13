@@ -20,7 +20,7 @@ NodeJS SNMP Monitoring
 3. Get and install the current version of nodeJS -> http://nodejs.org/
 4. Install all necessary modules for nodin
   * redis -> https://github.com/mranney/node_redis
-  * net-snap (for munin) -> https://www.npmjs.com/package/net-snmp
+  * net-snmp (for munin) -> https://www.npmjs.com/package/net-snmp
   * snmp-native (for hugin) -> https://github.com/calmh/node-snmp-native
 5. Go to the directory where you cloned this repo (e.g. /opt/node/nodin (for linux)) and start nodin (node core/nodin.js)
 
