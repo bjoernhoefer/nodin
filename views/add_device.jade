@@ -1,0 +1,39 @@
+doctype html
+html
+  head
+    include ./includes/head.jade
+    script(src='/public/javascripts/add_device.js')
+  body
+    include ./includes/navigation.jade
+    div(id='add_device')
+        form(class='form-horizontal', role='form', id='add_device')
+            div(id='device_form')
+                div(class='form-group')
+                    label(class='control-label col-sm-2' for='device') Hostname
+                    div(class='col-sm-5')    
+                        input(type='text', class='form-control' id='device')
+                        input(type='checkbox', id='usedefaults', value='defaults', onClick='change_defaults()', checked)
+                        |   Use default values
+            
+            div(id='non_default_settings_div' class='hide')
+                form(class='form-horizontal', role='form', id='non_default_settings')
+                    div(class='form-group')
+                        label(class='control-label col-sm-2' for='Community') SNMP Community
+                        div(class='col-sm-5')    
+                            input(type='text', class='form-control' id='Community')
+                    div(class='form-group') 
+                        label(class='control-label col-sm-2' for='interval') Poll Interval
+                        div(class='col-sm-5')    
+                            input(type='text', class='form-control' id='interval')
+                    div(class='form-group')
+                        label(class='control-label col-sm-2' for='type') Type of device (currently not used)
+                        div(class='col-sm-5')    
+                            input(type='text', class='form-control' id='type')
+                    div(class='form-group')
+                        label(class='control-label col-sm-2' for='model') Model of device (currently not used)
+                        div(class='col-sm-5')    
+                            input(type='text', class='form-control' id='model')
+            div(id='submit')
+                button(type='submit', class='btn btn-default', id='save_changes', onclick='add_device()') Add device
+    div(id='messages', class='hide')
+        p Messages

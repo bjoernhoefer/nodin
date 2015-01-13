@@ -1,0 +1,43 @@
+doctype html
+html
+    head
+        include ./includes/head.jade
+        script(src='/public/javascripts/configuration.js')
+    body
+        include ./includes/navigation.jade
+        
+        div(id='configuration_navigation')
+            ul(class='nav nav-tabs', role='tablist')
+                li(class='active', id='defaults')
+                    a(href='javascript:change_active("defaults")') Default Values
+                li(id='redis')
+                    a(href='javascript:change_active("redis")') Redis Settings
+                li(id='influx')
+                    a(href='javascript:change_active("influx")') Influx Settings
+        div(id='defaults_values', style='padding-top: 20px')
+            form(class='form-horizontal', role='form', id='configuration')
+                div(id='default_values_form')
+                    each value, key in nodin_config.defaults
+                        div(class='form-group')
+                            label(class='control-label col-sm-2' for='#{key}') #{key}
+                            div(class='col-sm-3')    
+                                input(type='text', class='form-control' id='#{key}' value='#{value}')
+                    button(type='submit', class='btn btn-default', id='save_changes', onclick='save_configuration()') Save changes
+        div(id='redis_values', style='padding-top: 20px', class='hide')
+            form(class='form-horizontal', role='form', id='configuration')
+                div(id='redis_form')
+                    each value, key in nodin_config.redis
+                        div(class='form-group')
+                            label(class='control-label col-sm-2' for='#{key}') #{key}
+                            div(class='col-sm-3')    
+                                input(type='text', class='form-control' id='#{key}' value='#{value}')
+                    button(type='submit', class='btn btn-default', id='save_changes', onclick='save_configuration()') Save changes
+        div(id='influx_values', style='padding-top: 20px', class='hide')
+            form(class='form-horizontal', role='form', id='configuration')
+                div(id='influx_form')
+                    each value, key in nodin_config.influxdb
+                        div(class='form-group')
+                            label(class='control-label col-sm-2' for='#{key}') #{key}
+                            div(class='col-sm-3')    
+                                input(type='text', class='form-control' id='#{key}' value='#{value}')
+                    button(type='submit', class='btn btn-default', id='save_changes', onclick='save_configuration()') Save changes

@@ -31,19 +31,21 @@ function float2int (value) {
 
 // Prepare OID Array to send it to query_snmp
 function snmp_prepare(host, hostdetails){
-        Object.keys(JSON.parse(hostdetails.ports)).forEach(function(port_detail_num){
-                var theoids = [];
-                if (hostdetails.ports[port_detail_num].operational != 2){
-                        if (hostdetails.ports[port_detail_num].adminstate != 2){
-                                Object.keys(nodin.snmp_configuration.hugin.alloids).forEach(function(oids_key){
-                                        theoids.push(getoid(oids_key + "." + port_detail_num))
-                                })
+        // Ports should are the food for hugin - without it, he won't fly ;-)
+        if (hostdetails.ports){
+                Object.keys(JSON.parse(hostdetails.ports)).forEach(function(port_detail_num){
+                        var theoids = [];
+                        if (hostdetails.ports[port_detail_num].operational != 2){
+                                if (hostdetails.ports[port_detail_num].adminstate != 2){
+                                        Object.keys(nodin.snmp_configuration.hugin.alloids).forEach(function(oids_key){
+                                                theoids.push(getoid(oids_key + "." + port_detail_num))
+                                        })
+                                }
                         }
-                }
-                // Query SNMP for every port (easier to handle in query_snmp)
-                query_snmp(theoids, host, hostdetails)
-        })
-        
+                        // Query SNMP for every port (easier to handle in query_snmp)
+                        query_snmp(theoids, host, hostdetails)
+                })
+        }
 }
 
 function query_snmp(theoids, hostname, hostdetails){
@@ -97,7 +99,7 @@ function query_snmp(theoids, hostname, hostdetails){
                         
                         // Build and send the UDP message
                         udp_message=new Buffer(JSON.stringify(INFLUX_OUT));
-                        client.send(udp_message, 0, udp_message.length, nodin.configuration.influxdb.port, nodin.configuration.influxdb.host, function(err, byte){
+                        client.send(udp_message, 0, udp_message.length, nodin.configuration.influxdb.influx_port, nodin.configuration.influxdb.host, function(err, byte){
                                 if (err){console.error("\n\nUDP Error!!!!\n\n")}
                         })
                 }

@@ -7,6 +7,8 @@ if (fs.existsSync(NODIN_CONFIG)){
     try{
         var configuration = JSON.parse(fs.readFileSync(NODIN_CONFIG, 'utf8'));
         exports.configuration = configuration;
+        
+        
     } catch(error) {
         console.log("config file failure!!!")
         console.log(error)
@@ -72,9 +74,7 @@ else{
             }
             
         })
-    })
-        
-    
+    }) 
 }
 
 // Check details of device
@@ -169,7 +169,7 @@ function check_redis_hosts(redis_host_name){
                 check_file_hosts(redis_host_name)
             }
             else{
-                check_consistence(redis_host_name, check_hostdetails, function(consistence_result){
+                check_snmp_consistence(redis_host_name, check_hostdetails, function(consistence_result){
                     if (consistence_result == "inconsistent"){
                         check_file_hosts(redis_host_name)
                     }
@@ -183,7 +183,7 @@ function check_redis_hosts(redis_host_name){
 }
 
 // Check if SNMP consistent (configuration-file == REDIS Databse)
-function check_consistence(consistence_host, consistence_host_details, callback){
+function check_snmp_consistence(consistence_host, consistence_host_details, callback){
     if (consistence_host_details.community == hostlist[consistence_host].Community){
         callback("consistent")
     }
@@ -193,6 +193,8 @@ function check_consistence(consistence_host, consistence_host_details, callback)
     
 }
 
+var timerid_hugin = {}
+var timerid_munin = {}
 
 function start_ravens(){
     // Start hugin
@@ -204,8 +206,8 @@ function start_ravens(){
                     redis_client.HGETALL(hosts[host_num], function(err, hostdetails){
                         if (err) console.log("hugin start failed: "+err)
                         else{
-                            setInterval(hugin.snmpquery, hostdetails.interval, hosts[host_num], hostdetails)
-                            setInterval(munin.gethostdetails, hostdetails.interval*500, hostdetails.IP, hostdetails.community, hosts[host_num])
+                            timerid_hugin[hosts[host_num]] = setInterval(hugin.snmpquery, hostdetails.interval, hosts[host_num], hostdetails)
+                            timerid_munin[hosts[host_num]] = setInterval(munin.gethostdetails, hostdetails.interval*500, hostdetails.IP, hostdetails.community, hosts[host_num])
                         }
                     })
                 })
@@ -215,6 +217,7 @@ function start_ravens(){
     })
 }
 
+// Save data to Redis
 function save_data(device, key, value, methode){
     redis_client.select(configuration.redis.device_db, function(){  
         
@@ -233,5 +236,182 @@ redis_client.on("error", function (err) {
     console.log("REDIS Error: " + err);
 });
 
+exports.list_devices = function(devices_callback){
+    redis_client.keys("*", function(err, redis_hosts){
+        if (err) console.log("nodin failed - list devices: " +err)
+        else{
+            devices_callback(redis_hosts)
+        }
+    })
+}
+
+exports.list_device_ports = function(device, deviceports){
+    redis_client.select(configuration.redis.device_db, function(){
+        redis_client.hget(device, "ports", function(err, ports) {
+            if (err) console.log("nodin failed - list ports: " +err)
+            else{
+                deviceports(ports)
+            }
+        })
+    })
+}
+
+// Configuration Management
+
+// Check if values of configuration file and Redis database are consistent - otherwise overwrite values in Redis with values read from config object
+function check_config_consistency(callback){
+    redis_client.select(configuration.redis.system_db, function(){
+        Object.keys(configuration).forEach(function(config_key){
+            redis_client.exists(config_key, function(err, config_exists){
+                if (err) console.log("nodin config consistency failed : " +err)
+                else{
+                    // Config values are not set in Redis
+                    if (config_exists == 0){
+                        Object.keys(configuration[config_key]).forEach(function(config_value){
+                            redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                if (err) console.log("nodin config consistency failed : " +err)
+                            })
+                        })
+                    }
+                    // Config values are set in Redis
+                    else{
+                        Object.keys(configuration[config_key]).forEach(function(config_value){
+                            redis_client.hexists(config_key, config_value, function(err, config_exists){
+                                if (err) console.log("nodin config consistency failed : " +err)
+                                else {
+                                    if (config_exists == 1){
+                                        redis_client.hget(config_key, config_value, function(err, config_value_value) {
+                                            if (err) console.log("nodin config consistency failed : " +err)
+                                            else{
+                                                if (configuration[config_key][config_value] != config_value_value){
+                                                    redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                                        if (err) console.log("nodin config consistency failed : " +err)
+                                                    })
+                                                }
+                                            }
+                                            
+                                        })
+                                    }
+                                    else {
+                                        console.log(config_value + "configuation value does exist")
+                                        redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                            if (err) console.log("nodin config consistency failed : " +err)
+                                        })
+                                    }
+                                    
+                                    
+                                }
+                            })
+                            
+                            
+                        })
+                    }
+                }
+            }) 
+        })
+    })
+}
+
+function change_config(section, key, value, callback){
+    if (configuration[section][key]){
+        configuration[section][key] = value
+        callback("set")
+        check_config_consistency()
+    }
+    else{
+        callback("error")
+    }
+    
+}
+
+function stop_raven(raven, device){
+    Object.keys(timerid_hugin).forEach(function(timerids){
+        if (timerids == device){
+            if (raven == "hugin"){
+                clearInterval(timerid_hugin[timerids])
+            }
+            else{
+                clearInterval(timerid_munin[timerids])
+            }
+        }
+    })
+}
+
+// add a device to nodin
+function add_device(device_details, callback){
+    // check if host already exists
+    
+    if (hostlist[device_details.device]){
+        callback("duplicate");
+    }
+    
+    
+    else {
+        dns.resolve4(device_details.device, function (err, address) {
+            if (err) {
+                console.log("IP Address of " + device_details.device +  " was not found! Please check and restart!")
+                callback("lookup")
+            }
+            else{
+                device_details.IP = address
+                // use user definied settings
+                if (device_details.defaults == "false"){
+                    
+                    // check if all details are set
+                    // Community
+                    if (device_details.Community == '') { device_details.Community = configuration.defaults.community}
+                    // interval
+                    if (device_details.interval == '') { device_details.interval = configuration.defaults.interval }
+                    // device_type
+                    if (device_details.type == '') { device_details.type = configuration.defaults.type }
+                    // model
+                    if (device_details.model == '') { device_details.type = configuration.defaults.type }
+                    
+                    hostlist[device_details.device] = {
+                        Community : device_details.Community,
+                        interval : device_details.interval,
+                        type : device_details.type,
+                        model : device_details.model
+                    }
+                    write_device_config_file(function(result){
+                        callback(result)
+                    })
+                    check_file_hosts(device_details.device)
+                }
+                else{
+                    // Fill up hostlist array with default values
+                    hostlist[device_details.device] = {
+                        Community : configuration.defaults.community,
+                        interval : configuration.defaults.interval,
+                        type : configuration.defaults.type,
+                        model: configuration.defaults.model
+                    }
+                    write_device_config_file(function(result){
+                        callback(result)
+                    })
+                    check_file_hosts(device_details.device)
+                }
+            }
+        })
+    }
+    
+}
+
+// Write config file
+function write_device_config_file(callback){
+    fs.writeFile(DEVICE_CONFIG, JSON.stringify(hostlist), function(err){
+        if (err) {
+            console.log("nodin config save failed: " + err)
+            callback("file")
+        }
+        else {
+            callback("ok")
+        }
+    })
+}
 
 exports.save_data = save_data;
+exports.confguraiton = configuration;
+exports.check_config_consistency = check_config_consistency;
+exports.change_config = change_config;
+exports.add_device = add_device;
