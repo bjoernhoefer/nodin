@@ -17,12 +17,10 @@ NodeJS SNMP Monitoring
   * REDIS (stores all properties of your devices) -> http://redis.io/ 
   * INFLUXDB (stores all values of your devices) -> http://influxdb.com/
 2. Install the databases
-3. Get and install the current version of nodeJS -> http://nodejs.org/
-4. Install all necessary modules for nodin
-  * redis -> https://github.com/mranney/node_redis
-  * net-snmp (for munin) -> https://www.npmjs.com/package/net-snmp
-  * snmp-native (for hugin) -> https://github.com/calmh/node-snmp-native
-5. Go to the directory where you cloned this repo (e.g. /opt/node/nodin (for linux)) and start nodin (node core/nodin.js)
+3. Get and install the current version of nodeJS (including npm) -> http://nodejs.org/
+4. Clone this repo
+5. Enter the cloned directory and type in "npm install"
+6. Start nodin by typing ./bin/www (please make sure the file is executeable)
 
 * (Optional) To view your data you might also get grafana -> http://grafana.org/
 
