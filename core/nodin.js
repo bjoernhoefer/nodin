@@ -7,8 +7,7 @@ if (fs.existsSync(NODIN_CONFIG)){
     try{
         var configuration = JSON.parse(fs.readFileSync(NODIN_CONFIG, 'utf8'));
         exports.configuration = configuration;
-        
-        
+
     } catch(error) {
         console.log("config file failure!!!")
         console.log(error)
@@ -37,11 +36,14 @@ var dns = require('dns');
 var redis = require('redis');
 var redis_client = redis.createClient(configuration.redis.port, configuration.redis.host);
 
+
+
 // Read device configuration file
 var DEVICE_CONFIG = './conf/devices.conf'
 if (fs.existsSync(DEVICE_CONFIG)){
     try{
         var hostlist = JSON.parse(fs.readFileSync(DEVICE_CONFIG, 'utf8'));
+        exports.hostlist = hostlist
     } catch(error) {
         console.log("Device config file failure!!!")
         console.log(error)
@@ -97,6 +99,7 @@ function checkhosts(){
             })
         })
     })
+    //check_config_consistency()
     start_ravens();
 }
 
@@ -113,7 +116,7 @@ function check_file_hosts(file_host_name){
         }
         else{
             // Inform user about missing value, save value and fire up munin
-            console.log("No SNMP community found in configfile - using default!")
+            console.log(file_host_name + " - No SNMP community found in configfile - using default!")
             munin.gethostdetails(hostlist[file_host_name].IP, configuration.defaults.snmp_community, file_host_name)
             save_data(file_host_name, "community", configuration.defaults.snmp_community)
         }
@@ -135,7 +138,7 @@ function check_file_hosts(file_host_name){
                 }
                 else{
                     // Inform user about missing value, save value and fire up munin
-                    console.log("No SNMP community found in configfile - using default!")
+                    console.log(file_host_name + " - No SNMP community found in configfile - using default!")
                     munin.gethostdetails(addresses, configuration.defaults.snmp_community, file_host_name)
                     save_data(file_host_name, "community", configuration.defaults.snmp_community)
                     save_data(file_host_name, "IP", addresses)
@@ -217,6 +220,79 @@ function start_ravens(){
     })
 }
 
+function stop_raven(raven, device, callback){
+    Object.keys(timerid_hugin).forEach(function(timerids){
+        if (timerids == device){
+            if (raven == "hugin"){
+                clearInterval(timerid_hugin[timerids])
+                callback("stopped")
+            }
+            else if (raven == "munin"){
+                clearInterval(timerid_munin[timerids])
+                callback("stopped")
+            }
+        }
+        else{
+            callback("not found")
+        }
+    })
+}
+
+
+function start_single_raven(raven, device, callback){
+    if (raven == "hugin"){
+        timerid_hugin[device] = setInterval(hugin.snmpquery, hostdetails[device].interval, device, hostdetails[device])
+        callback("started")
+    }
+    else if (raven == "munin"){
+        timerid_munin[device] = setInterval(munin.gethostdetails, hostdetails[device].interval*500, hostdetails[device].IP, hostdetails[device].community, device)
+        callback("started")
+    }
+    else{
+        callback("error")
+    }
+}
+
+function restart_raven(raven, device, callback){
+    if (raven == "hugin"){
+        stop_raven("hugin", device, function(stop_result){
+            if (stop_result == "stopped"){
+                start_single_raven("hugin", device, function(start_result){
+                    if (start_result == "started"){
+                        callback("restarted")
+                    }
+                    else{
+                        callback(start_result)
+                    }
+                })
+            }
+            else{
+                callback(stop_result)
+            }
+        })
+    }
+    else if (raven == "munin"){
+        stop_raven("munin", device, function(stop_result){
+            if (stop_result == "stopped"){
+                start_single_raven("munin", device, function(start_result){
+                    if (start_result == "started"){
+                        callback("restarted")
+                    }
+                    else{
+                        callback(start_result)
+                    }
+                })
+            }
+            else{
+                callback(stop_result)
+            }
+        })
+    }
+    else{
+        callback("error")
+    }
+}
+
 // Save data to Redis
 function save_data(device, key, value, methode){
     redis_client.select(configuration.redis.device_db, function(){  
@@ -224,9 +300,11 @@ function save_data(device, key, value, methode){
         if (methode == "ports"){
             
             redis_client.hset(device, key, JSON.stringify(value));
+            write_device_config_file(function(result){});
         }
         else{
             redis_client.hset(device, key, value)
+            write_device_config_file(function(result){});
         }
         
     })
@@ -260,81 +338,80 @@ exports.list_device_ports = function(device, deviceports){
 
 // Check if values of configuration file and Redis database are consistent - otherwise overwrite values in Redis with values read from config object
 function check_config_consistency(callback){
-    redis_client.select(configuration.redis.system_db, function(){
-        Object.keys(configuration).forEach(function(config_key){
-            redis_client.exists(config_key, function(err, config_exists){
-                if (err) console.log("nodin config consistency failed : " +err)
-                else{
-                    // Config values are not set in Redis
-                    if (config_exists == 0){
-                        Object.keys(configuration[config_key]).forEach(function(config_value){
-                            redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
-                                if (err) console.log("nodin config consistency failed : " +err)
-                            })
-                        })
-                    }
-                    // Config values are set in Redis
+    if (configuration.redis.system_db){
+        console.log("system db: "+ configuration.redis.system_db)
+        redis_client.select(configuration.redis.system_db, function(){
+            Object.keys(configuration).forEach(function(config_key){
+                redis_client.exists(config_key, function(err, config_exists){
+                    if (err) console.log("nodin config consistency failed : " +err)
                     else{
-                        Object.keys(configuration[config_key]).forEach(function(config_value){
-                            redis_client.hexists(config_key, config_value, function(err, config_exists){
-                                if (err) console.log("nodin config consistency failed : " +err)
-                                else {
-                                    if (config_exists == 1){
-                                        redis_client.hget(config_key, config_value, function(err, config_value_value) {
-                                            if (err) console.log("nodin config consistency failed : " +err)
-                                            else{
-                                                if (configuration[config_key][config_value] != config_value_value){
-                                                    redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
-                                                        if (err) console.log("nodin config consistency failed : " +err)
-                                                    })
-                                                }
-                                            }
-                                            
-                                        })
-                                    }
-                                    else {
-                                        console.log(config_value + "configuation value does exist")
-                                        redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
-                                            if (err) console.log("nodin config consistency failed : " +err)
-                                        })
-                                    }
-                                    
-                                    
-                                }
+                        // Config values are not set in Redis
+                        if (config_exists == 0){
+                            Object.keys(configuration[config_key]).forEach(function(config_value){
+                                redis_client.select(configuration.redis.system_db, function(){
+                                    redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                        if (err) console.log("nodin config consistency failed : " +err)
+                                    })
+                                })
                             })
-                            
-                            
-                        })
+                        }
+                        // Config values are set in Redis
+                        else{
+                            Object.keys(configuration[config_key]).forEach(function(config_value){
+                                redis_client.hexists(config_key, config_value, function(err, config_exists){
+                                    if (err) console.log("nodin config consistency failed : " +err)
+                                    else {
+                                        if (config_exists == 1){
+                                            redis_client.hget(config_key, config_value, function(err, config_value_value) {
+                                                if (err) console.log("nodin config consistency failed : " +err)
+                                                else{
+                                                    if (configuration[config_key][config_value] != config_value_value){
+                                                        redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                                            if (err) console.log("nodin config consistency failed : " +err)
+                                                        })
+                                                    }
+                                                }
+                                                
+                                            })
+                                        }
+                                        else {
+                                            console.log(config_value + "configuation value does exist")
+                                            redis_client.hset(config_key, config_value, configuration[config_key][config_value], function(err, redis_message){
+                                                if (err) console.log("nodin config consistency failed : " +err)
+                                            })
+                                        }
+                                        
+                                        
+                                    }
+                                })
+                                
+                                
+                            })
+                        }
                     }
-                }
-            }) 
+                }) 
+            })
         })
-    })
+    }
+    else{
+        console.log("system db not set!")
+    }
 }
 
 function change_config(section, key, value, callback){
     if (configuration[section][key]){
         configuration[section][key] = value
         callback("set")
-        check_config_consistency()
+        //check_config_consistency()
     }
     else{
+        console.log("nodin - change config: Section: "+ section + " - Key: "+key+" - Value:" + value)
+        Object.keys(configuration[section]).forEach(function(config_value){
+            console.log(config_value)
+        })
         callback("error")
     }
     
-}
-
-function stop_raven(raven, device){
-    Object.keys(timerid_hugin).forEach(function(timerids){
-        if (timerids == device){
-            if (raven == "hugin"){
-                clearInterval(timerid_hugin[timerids])
-            }
-            else{
-                clearInterval(timerid_munin[timerids])
-            }
-        }
-    })
 }
 
 // add a device to nodin
@@ -377,6 +454,16 @@ function add_device(device_details, callback){
                         callback(result)
                     })
                     check_file_hosts(device_details.device)
+                    start_ravens("hugin", device_details.device, function(result){
+                        if (result != "started"){
+                            console.log("nodin: Add device - start of hugin failed "+ result)
+                        }
+                    })
+                    start_ravens("munin", device_details.device, function(result){
+                       if (result != "started"){
+                            console.log("nodin: Add device - start of munin failed "+ result)
+                        } 
+                    })
                 }
                 else{
                     // Fill up hostlist array with default values
@@ -390,6 +477,16 @@ function add_device(device_details, callback){
                         callback(result)
                     })
                     check_file_hosts(device_details.device)
+                    start_ravens("hugin", device_details.device, function(result){
+                        if (result != "started"){
+                            console.log("nodin: Add device - start of hugin failed "+ result)
+                        }
+                    })
+                    start_ravens("munin", device_details.device, function(result){
+                       if (result != "started"){
+                            console.log("nodin: Add device - start of munin failed "+ result)
+                        } 
+                    })
                 }
             }
         })

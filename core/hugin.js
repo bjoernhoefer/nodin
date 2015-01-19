@@ -9,6 +9,7 @@ var dgram = require("dgram");
 var client = dgram.createSocket("udp4");
 // nodin
 var nodin = require("./nodin.js")
+var munin = require("./munin.js")
 var snmpsession = new snmp.Session({port: 161})
 
 var prev_val = {};
@@ -33,18 +34,54 @@ function float2int (value) {
 function snmp_prepare(host, hostdetails){
         // Ports should are the food for hugin - without it, he won't fly ;-)
         if (hostdetails.ports){
-                Object.keys(JSON.parse(hostdetails.ports)).forEach(function(port_detail_num){
-                        var theoids = [];
-                        if (hostdetails.ports[port_detail_num].operational != 2){
-                                if (hostdetails.ports[port_detail_num].adminstate != 2){
-                                        Object.keys(nodin.snmp_configuration.hugin.alloids).forEach(function(oids_key){
-                                                theoids.push(getoid(oids_key + "." + port_detail_num))
-                                        })
+            if (hostdetails.ports.length > 2){
+                    Object.keys(JSON.parse(hostdetails.ports)).forEach(function(port_detail_num){
+                            var theoids = [];
+                            if (hostdetails.ports[port_detail_num]){
+                                if (hostdetails.ports[port_detail_num].operational != 2){
+                                        if (hostdetails.ports[port_detail_num].adminstate != 2){
+                                                Object.keys(nodin.snmp_configuration.hugin.alloids).forEach(function(oids_key){
+                                                        theoids.push(getoid(oids_key + "." + port_detail_num))
+                                                })
+                                        }
+                                
+                                // Query SNMP for every port (easier to handle in query_snmp)
+                                query_snmp(theoids, host, hostdetails)
                                 }
-                        }
-                        // Query SNMP for every port (easier to handle in query_snmp)
-                        query_snmp(theoids, host, hostdetails)
-                })
+                            }
+                    })
+            }
+            else{
+                if (nodin.hostlist[host].processed){
+                    console.log("processed: "+ nodin.hostlist[host].processed)
+                    if (nodin.hostlist[host].processed == true){
+                        console.log("host is currently discovered - no need for hugin to fly...")
+                    }
+                    else{
+                        nodin.hostlist[host].processed = true
+                        munin.gethostdetails(hostdetails.IP, hostdetails.community, host)
+                    }
+                }
+                else{
+                    nodin.hostlist[host].processed = true
+                    munin.gethostdetails(hostdetails.IP, hostdetails.community, host)
+                }
+            }
+        }
+        else{
+            if (nodin.hostlist[host].processed){
+                if (nodin.hostlist[host].processed == true){
+                    console.log("host is currently discovered - no need for hugin to fly...")
+                }
+                else{
+                    nodin.hostlist[host].processed = true
+                    munin.gethostdetails(hostdetails.IP, hostdetails.community, host)
+                }
+            }
+            else{
+                    nodin.hostlist[host].processed = true
+                    munin.gethostdetails(hostdetails.IP, hostdetails.community, host)
+                }
         }
 }
 
@@ -99,7 +136,7 @@ function query_snmp(theoids, hostname, hostdetails){
                         
                         // Build and send the UDP message
                         udp_message=new Buffer(JSON.stringify(INFLUX_OUT));
-                        client.send(udp_message, 0, udp_message.length, nodin.configuration.influxdb.influx_port, nodin.configuration.influxdb.host, function(err, byte){
+                        client.send(udp_message, 0, udp_message.length, nodin.configuration.influxdb.port, nodin.configuration.influxdb.host, function(err, byte){
                                 if (err){console.error("\n\nUDP Error!!!!\n\n")}
                         })
                 }

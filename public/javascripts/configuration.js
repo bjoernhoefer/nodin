@@ -43,11 +43,13 @@ function save_configuration(){
 }
 
 function change_active(tab){
+    //alert(tab)
     activetab = $('ul.nav-tabs li.active').attr( "id")
     $('ul.nav-tabs li').each(function(){
-        $("#"+[$(this).attr('id')]+"_values").addClass('hide')
+        $("#"+[$(this).attr('id')]+"_values").removeClass("active")
+        $("#"+[$(this).attr('id')]+"_values").addClass("hide")
     })
-    $("#"+tab+"_values").removeClass('hide')
-    $("#"+activetab).removeClass('active')
-    $("#"+tab).addClass('active')
+    $("#"+tab+"_values").removeClass("hide")
+    $("#"+tab+"_values").addClass("active")
+    $("#save_changes").attr("onclick",tab)
 }
