@@ -33,9 +33,10 @@ if (fs.existsSync(SNMP_CONFIG)){
 var munin = require("./munin.js")
 var hugin = require("./hugin.js")
 var dns = require('dns');
+/*
 var redis = require('redis');
 var redis_client = redis.createClient(configuration.redis.port, configuration.redis.host);
-
+*/
 
 
 // Read device configuration file
@@ -49,11 +50,14 @@ if (fs.existsSync(DEVICE_CONFIG)){
         console.log(error)
         process.exit(1);
     }
-    checkhosts();
+    //checkhosts();
+    Object.keys(hostlist).forEach(function(file_host_name){
+        check_file_hosts(file_host_name)
+    })
 }
 
 else{
-    console.log("Host definition file "+DEVICE_CONFIG+" not found, trying REDIS only mode")
+    /*console.log("Host definition file "+DEVICE_CONFIG+" not found, trying REDIS only mode")
     
     redis_client.select(configuration.redis.device_db, function(){
         redis_client.keys("*", function(err, redis_hosts){
@@ -76,9 +80,13 @@ else{
             }
             
         })
-    }) 
+    })
+    */
+    console.log("Host definiton file not found")
 }
 
+
+/*
 // Check details of device
 function checkhosts(){
 // Check if host is already stored in REDIS
@@ -102,6 +110,8 @@ function checkhosts(){
     //check_config_consistency()
     start_ravens();
 }
+
+*/
 
 function check_file_hosts(file_host_name){
     anerror = false;
@@ -163,6 +173,7 @@ function check_file_hosts(file_host_name){
     }
 }
 
+/*
 function check_redis_hosts(redis_host_name){
     redis_client.select(configuration.redis.device_db, function(){
         redis_client.HGETALL(redis_host_name, function(err, check_hostdetails){
@@ -195,10 +206,12 @@ function check_snmp_consistence(consistence_host, consistence_host_details, call
     }
     
 }
+*/
 
 var timerid_hugin = {}
 var timerid_munin = {}
 
+/*
 function start_ravens(){
     // Start hugin
     redis_client.select(configuration.redis.device_db, function(){
@@ -219,6 +232,16 @@ function start_ravens(){
         })
     })
 }
+*/
+
+
+function start_ravens(){
+    Object.keys(hostlist).forEach(function(file_host_name){
+            timerid_hugin[device_name] = setInterval(hugin.snmpquery, file_host_name[file_host_name].interval, device_name, hostlist[device_name])
+            timerid_munin[device_name] = setInterval(munin.gethostdetails, hostlist[file_host_name].interval*500, file_host_name[device_name].IP, hostlist[device_name].community, hostlist[device_name])
+    }
+}
+
 
 function stop_raven(raven, device, callback){
     Object.keys(timerid_hugin).forEach(function(timerids){
@@ -299,11 +322,11 @@ function save_data(device, key, value, methode){
         
         if (methode == "ports"){
             
-            redis_client.hset(device, key, JSON.stringify(value));
+            //redis_client.hset(device, key, JSON.stringify(value));
             write_device_config_file(function(result){});
         }
         else{
-            redis_client.hset(device, key, value)
+            //redis_client.hset(device, key, value)
             write_device_config_file(function(result){});
         }
         
